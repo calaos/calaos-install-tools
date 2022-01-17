@@ -53,14 +53,14 @@ parse_cmdline()
 #args: /dev/sda
 get_dev_part_count()
 {
-    lsblk --json $1 | jq ".blockdevices[0].children | length"
+    lsblk --json $1 | jq -r ".blockdevices[0].children | length"
 }
 
 #args: /dev/sda <partnum>
 get_dev_part()
 {
     part=$2
-    lsblk --json $1 | jq ".blockdevices[0].children[$((part - 1))].name"
+    lsblk --json $1 | jq -r ".blockdevices[0].children[$((part - 1))].name"
 }
 
 err_report() {
