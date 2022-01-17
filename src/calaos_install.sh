@@ -1,17 +1,43 @@
-#!/bin/sh
+#!/bin/bash
+# shellcheck disable=SC2034,SC2086
 
 # Usage : install.sh [destination_disk]
 set -e
 
 NOCOLOR='\033[0m'
 CYAN='\033[0;36m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+ORANGE='\033[0;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+LIGHTGRAY='\033[0;37m'
+DARKGRAY='\033[1;30m'
+LIGHTRED='\033[1;31m'
+LIGHTGREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+LIGHTBLUE='\033[1;34m'
+LIGHTPURPLE='\033[1;35m'
+LIGHTCYAN='\033[1;36m'
+WHITE='\033[1;37m'
 
-function info()
+info()
 {
-    echo -e "${CYAN}$@${NOCOLOR}"
+    echo -e "${CYAN}$*${NOCOLOR}"
 }
 
-function parse_cmdline()
+green()
+{
+    echo -e "${GREEN}$*${NOCOLOR}"
+}
+
+err()
+{
+    echo -e "${RED}$*${NOCOLOR}"
+}
+
+parse_cmdline()
 {
     # Parse command line and LABEL variable
     set -- $(cat /proc/cmdline)
@@ -24,6 +50,25 @@ function parse_cmdline()
     done
 }
 
+#args: /dev/sda
+get_dev_part_count()
+{
+    lsblk --json $1 | jq ".blockdevices[0].children | length"
+}
+
+#args: /dev/sda <partnum>
+get_dev_part()
+{
+    part=$2
+    lsblk --json $1 | jq ".blockdevices[0].children[$((part - 1))].name"
+}
+
+err_report() {
+    err "Error on line $1"
+}
+
+trap 'err_report $LINENO' ERR
+
 parse_cmdline
 
 if [ $LABEL == "live-efi" ]; then
@@ -35,19 +80,7 @@ fi
 info "--> Installing $2 on destination $1"
 
 destination=$1
-origin=$2
-
-origin_rootfs=`mount | grep "on \/ " | cut -d ' ' -f1`
-
-if [ $LABEL == "live-efi" ]; then
-    destination_esp=${destination}1
-    destination_swap=${destination}2
-    destination_rootfs=${destination}3
-else
-    destination_esp=${destination}2
-    destination_swap=${destination}1
-    destination_rootfs=${destination}2
-fi
+origin_rootfs=$(mount | grep "on \/ " | cut -d ' ' -f1)
 
 # Deleting partition table
 info "--> Deleting partition table on ${destination}"
@@ -64,24 +97,32 @@ if [ $LABEL == "live-efi" ]; then
     parted -s ${destination} set 2 boot on > /dev/null
     parted -s ${destination} print
 
+    destination_esp=$(get_dev_part ${destination} 1)
+    destination_swap=$(get_dev_part ${destination} 2)
+    destination_rootfs=$(get_dev_part ${destination} 3)
+
     info "--> Formating partitions"
     mkfs.vfat -F32 ${destination_esp} > /dev/null
     mkswap ${destination_swap}
     mkfs.ext4 -F ${destination_rootfs}
 else
     info "--> Creating Bios partition table"
-    parted -s ${destination} mklabel msdos  > /dev/null > /dev/null
+    parted -s ${destination} mklabel msdos  > /dev/null
     parted -s ${destination} mkpart primary linux-swap 1MiB 2049MiB > /dev/null
     parted -s ${destination} mkpart primary ext4 2049MiB 100% > /dev/null
     parted -s ${destination} set 2 boot on > /dev/null
     parted -s ${destination} print
+
+    destination_esp=$(get_dev_part ${destination} 2)
+    destination_swap=$(get_dev_part ${destination} 1)
+    destination_rootfs=$(get_dev_part ${destination} 2)
 
     info "--> Formating partitions"
     mkswap ${destination_swap}
     mkfs.ext4 -F ${destination_rootfs}
 fi
 
-uuid_rootfs=`blkid -s UUID -o value ${destination_rootfs}`
+uuid_rootfs=$(blkid -s UUID -o value ${destination_rootfs})
 
 info "--> Copy rootfs from live usb"
 mkdir -p /mnt/origin_rootfs /mnt/destination_rootfs
@@ -104,7 +145,7 @@ if [ $LABEL == "live-efi" ]; then
     bootctl --path /mnt/destination_esp install
     cat << EOF > /mnt/destination_esp/loader/loader.conf
 default calaos.conf
-timeout 5
+timeout 1
 console-mode max
 editor yes
 EOF
@@ -129,7 +170,7 @@ else
     cat << EOF > /mnt/destination_rootfs/syslinux/syslinux.cfg
 ALLOWOPTIONS 1
 DEFAULT boot
-TIMEOUT 50
+TIMEOUT 10
 PROMPT 0
 ui vesamenu.c32
 menu title Select kernel options and boot kernel
@@ -165,4 +206,4 @@ umount /mnt/origin_rootfs
 info "--> Check destination rootfs"
 e2fsck -f ${destination_rootfs} -y
 
-info "--> Installation successful, you can now reboot"
+green "--> Installation successful, you can now reboot"
