@@ -97,9 +97,9 @@ if [ $LABEL == "live-efi" ]; then
     parted -s ${destination} set 2 boot on > /dev/null
     parted -s ${destination} print
 
-    destination_esp=$(get_dev_part ${destination} 1)
-    destination_swap=$(get_dev_part ${destination} 2)
-    destination_rootfs=$(get_dev_part ${destination} 3)
+    destination_esp="/dev/$(get_dev_part ${destination} 1)"
+    destination_swap="/dev/$(get_dev_part ${destination} 2)"
+    destination_rootfs="/dev/$(get_dev_part ${destination} 3)"
 
     info "--> Formating partitions"
     mkfs.vfat -F32 ${destination_esp} > /dev/null
@@ -113,9 +113,9 @@ else
     parted -s ${destination} set 2 boot on > /dev/null
     parted -s ${destination} print
 
-    destination_esp=$(get_dev_part ${destination} 2)
-    destination_swap=$(get_dev_part ${destination} 1)
-    destination_rootfs=$(get_dev_part ${destination} 2)
+    destination_esp="/dev/$(get_dev_part ${destination} 2)"
+    destination_swap="/dev/$(get_dev_part ${destination} 1)"
+    destination_rootfs="/dev/$(get_dev_part ${destination} 2)"
 
     info "--> Formating partitions"
     mkswap ${destination_swap}
