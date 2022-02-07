@@ -260,8 +260,8 @@ fi
 #keep default 5s boot menu timeout for now. To allow user to choose a snapshot if any
 #sed -i 's/GRUB_TIMEOUT=[0-9]/GRUB_TIMEOUT=1/g' ${dst}/etc/default/grub
 sed -i 's/^GRUB_DISTRIBUTOR=.*$/GRUB_DISTRIBUTOR="Calaos OS"/g' ${dst}/etc/default/grub
-sed -i 's/^.*GRUB_COLOR_NORMAL=.*$/GRUB_COLOR_NORMAL="light-blue/black"/g' ${dst}/etc/default/grub
-sed -i 's/^.*GRUB_COLOR_HIGHLIGHT=.*$/GRUB_COLOR_HIGHLIGHT="white/blue"/g' ${dst}/etc/default/grub
+sed -i 's/^.*GRUB_COLOR_NORMAL=.*$/GRUB_COLOR_NORMAL="light-blue\/black"/g' ${dst}/etc/default/grub
+sed -i 's/^.*GRUB_COLOR_HIGHLIGHT=.*$/GRUB_COLOR_HIGHLIGHT="white\/blue"/g' ${dst}/etc/default/grub
 
 arch-chroot ${dst} grub-mkconfig -o /boot/grub/grub.cfg
 
