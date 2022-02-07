@@ -52,12 +52,19 @@ fi
 
 dst="/mnt"
 
+cmdline=$(cat /proc/cmdline)
+reg="subvol=@\/.snapshots\/([0-9]+)\/snapshot"
+if [[ $cmdline =~ $reg ]]
+then
+    snapNumber="${BASH_REMATCH[1]}"
+fi
+
 #mount temporary rootfs and snapshot subvolume to be able to use snapper
 mount -o noatime,compress=zstd ${rootdev} ${dst}
 mount -o noatime,compress=zstd,subvol=@/.snapshots ${rootdev} ${dst}/.snapshots
 
-info "--> Rollback rootfs"
-arch-chroot ${dst} snapper --no-dbus rollback
+info "--> Rollback rootfs to snapshot #$snapNumber"
+arch-chroot ${dst} snapper --no-dbus rollback $snapNumber
 arch-chroot ${dst} snapper --no-dbus list
 
 umount ${dst}/.snapshots
