@@ -69,6 +69,13 @@ err_report() {
 
 trap 'err_report $LINENO' ERR
 
+destination=$1
+if [ -z "$destination" ]
+then
+    err "No disk argument given. Usage: $0 /dev/xxx"
+    exit 1
+fi
+
 parse_cmdline
 
 if [ $LABEL == "live-efi" ]; then
@@ -77,10 +84,15 @@ else
     info "--> Install in BIOS mode"
 fi
 
-info "--> Installing $2 on destination $1"
+info "--> Installing on disk $destination"
 
-destination=$1
 origin_rootfs=$(mount | grep "on \/ " | cut -d ' ' -f1)
+
+if [ "$origin_rootfs" == "$destination" ]
+then
+    err "Can't install on same disk as source"
+    exit 1
+fi
 
 # Deleting partition table
 info "--> Deleting partition table on ${destination}"
@@ -104,7 +116,7 @@ if [ $LABEL == "live-efi" ]; then
     info "--> Formating partitions"
     mkfs.vfat -F32 ${destination_esp} > /dev/null
     mkswap ${destination_swap}
-    mkfs.ext4 -F ${destination_rootfs}
+    mkfs.btrfs --force --label "calaos-os" ${destination_rootfs}
 else
     info "--> Creating Bios partition table"
     parted -s ${destination} mklabel msdos  > /dev/null
@@ -119,91 +131,171 @@ else
 
     info "--> Formating partitions"
     mkswap ${destination_swap}
-    mkfs.ext4 -F ${destination_rootfs}
+    mkfs.btrfs --force --label "calaos-os" ${destination_rootfs}
 fi
 
 uuid_rootfs=$(blkid -s UUID -o value ${destination_rootfs})
 
-info "--> Copy rootfs from live usb"
-mkdir -p /mnt/origin_rootfs /mnt/destination_rootfs
-mount ${origin_rootfs} /mnt/origin_rootfs
-mount ${destination_rootfs} /mnt/destination_rootfs
-rsync -ah --info=progress2 /mnt/origin_rootfs/ /mnt/destination_rootfs
-rm -rf /mnt/destination_rootfs/.calaos-live
-genfstab -U /mnt/destination_rootfs >> /mnt/destination_rootfs/etc/fstab
+info "--> Create BTRFS filesystem"
+dst="/mnt/destination_rootfs"
+mkdir -p ${dst}
+mount ${destination_rootfs} ${dst}
+btrfs subvolume create ${dst}/@
+btrfs subvolume create ${dst}/@/.snapshots
 
+#Create a subvolume for the initial snapshot which will be the target of the installation
+mkdir ${dst}/@/.snapshots/1
 
+mkdir ${dst}/@/boot \
+      ${dst}/@/usr \
+      ${dst}/@/var
 
+btrfs subvolume create ${dst}/@/.snapshots/1/snapshot
+btrfs subvolume create ${dst}/@/boot/grub
+btrfs subvolume create ${dst}/@/opt
+btrfs subvolume create ${dst}/@/root
+btrfs subvolume create ${dst}/@/srv
+btrfs subvolume create ${dst}/@/tmp
+btrfs subvolume create ${dst}/@/usr/local
+btrfs subvolume create ${dst}/@/var/cache
+btrfs subvolume create ${dst}/@/var/log
+btrfs subvolume create ${dst}/@/var/spool
+btrfs subvolume create ${dst}/@/var/tmp
+
+#Snapper stores metadata for each snapshot in the snapshot's directory /@/.snapshots/# where "#" represents the snapshot number in an .xml file.
+cat > ${dst}/@/.snapshots/1/info.xml <<EOF
+<?xml version="1.0"?>
+<snapshot>
+	<type>single</type>
+	<num>1</num>
+	<date>$(date +"%Y-%m-%d %H:%M:%S")</date>
+	<description>First Root Filesystem Created at Installation</description>
+</snapshot>
+EOF
+
+#make the initial snapshot subvolume
+btrfs subvolume set-default $(btrfs subvolume list ${dst} | grep "@/.snapshots/1/snapshot" | grep -oP '(?<=ID )[0-9]+') ${dst}
+btrfs subvolume get-default ${dst}
+
+#disable CoW for /var
+chattr +C ${dst}/@/var/{cache,log,spool,tmp}
+
+btrfs subvolume list ${dst}
+
+#umount and remount properly the rootfs
+umount ${dst}
+mount -o noatime,compress=zstd ${destination_rootfs} ${dst}
+
+#make mountpoints and mount subvolumes
+mkdir -p ${dst}/{.snapshots,boot/grub,opt,root,srv,tmp,usr/local,var/cache,var/log,var/spool,var/tmp}
+
+mount -o noatime,compress=zstd,subvol=@/.snapshots ${destination_rootfs} ${dst}/.snapshots
+mount -o noatime,compress=zstd,subvol=@/boot/grub ${destination_rootfs} ${dst}/boot/grub
+mount -o noatime,compress=zstd,subvol=@/opt ${destination_rootfs} ${dst}/opt
+mount -o noatime,compress=zstd,subvol=@/root ${destination_rootfs} ${dst}/root
+mount -o noatime,compress=zstd,subvol=@/srv ${destination_rootfs} ${dst}/srv
+mount -o noatime,compress=zstd,subvol=@/tmp ${destination_rootfs} ${dst}/tmp
+mount -o noatime,compress=zstd,subvol=@/usr/local ${destination_rootfs} ${dst}/usr/local
+mount -o noatime,compress=zstd,subvol=@/var/cache ${destination_rootfs} ${dst}/var/cache
+mount -o noatime,compress=zstd,subvol=@/var/log ${destination_rootfs} ${dst}/var/log
+mount -o noatime,compress=zstd,subvol=@/var/spool ${destination_rootfs} ${dst}/var/spool
+mount -o noatime,compress=zstd,subvol=@/var/tmp ${destination_rootfs} ${dst}/var/tmp
+
+#mount EFI
 if [ $LABEL == "live-efi" ]; then
-    info "--> Creating EFI partition"
-    mkdir -p /mnt/destination_esp
-    mount ${destination_esp} /mnt/destination_esp
-
-    info "--> Copy Kernel and Initramfs"
-    cp /boot/initramfs-linux.img  /mnt/destination_esp
-    cp /boot/vmlinuz-linux /mnt/destination_esp
-    bootctl --path /mnt/destination_esp install
-    cat << EOF > /mnt/destination_esp/loader/loader.conf
-default calaos.conf
-timeout 1
-console-mode max
-editor yes
-EOF
-
-    cat << EOF > /mnt/destination_esp/loader/entries/calaos.conf
-title   Calaos
-linux   /vmlinuz-linux
-initrd  /initramfs-linux.img
-options root="UUID=${uuid_rootfs}" rw
-EOF
-    umount /mnt/destination_esp
-else
-    info "--> Creating Boot partition"
-    mkdir -p /mnt/destination_rootfs/syslinux
-    cp /usr/lib/syslinux/bios/*.c32 /mnt/destination_rootfs/syslinux/
-    extlinux --install /mnt/destination_rootfs/syslinux
-    dd bs=440 count=1 conv=notrunc if=/usr/lib/syslinux/bios/mbr.bin of=$destination
-    info "--> Copy Kernel and Initramfs"
-    # cp /boot/initramfs-linux.img /mnt/destination_rootfs/boot
-    # cp /boot/vmlinuz-linux /mnt/destiation_rootfs/boot
-
-    cat << EOF > /mnt/destination_rootfs/syslinux/syslinux.cfg
-ALLOWOPTIONS 1
-DEFAULT boot
-TIMEOUT 10
-PROMPT 0
-ui vesamenu.c32
-menu title Select kernel options and boot kernel
-menu tabmsg Press [Tab] to edit, [Return] to select
-menu background splash.lss
-
-LABEL start
-    MENU LABEL Start Calaos OS
-    LINUX ../boot/vmlinuz-linux
-    APPEND root="UUID=${uuid_rootfs}" rootwait rw quiet
-    INITRD ../boot/initramfs-linux.img
-
-LABEL hdt
-	MENU LABEL Hardware Info
-	COM32 hdt.c32
-
-LABEL reboot
-	MENU LABEL Reboot
-	COM32 reboot.c32
-
-LABEL poweroff
-	MENU LABEL Power Off
-	COM32 poweroff.c32
-EOF
-
-    cp /boot/syslinux/splash.lss /mnt/destination_rootfs/syslinux/
+    mkdir -p ${dst}/efi
+    mount ${destination_esp} ${dst}/efi
 fi
 
-info "--> Unmouting all partitions"
-umount /mnt/destination_rootfs
-umount /mnt/origin_rootfs
+#enable swap
+swapon ${destination_swap}
 
-info "--> Check destination rootfs"
-e2fsck -f ${destination_rootfs} -y
+info "--> Copy rootfs from live usb"
+src="/mnt/origin_rootfs"
+mkdir -p ${src}
+mount ${origin_rootfs} ${src}
+
+rsync -avh ${src}/ ${dst} --exclude /.calaos-live
+rm -rf ${dst}/.calaos-live ${dst}/mnt/destination_rootfs ${dst}/mnt/origin_rootfs
+genfstab -U ${dst} >> ${dst}/etc/fstab
+
+cat ${dst}/etc/fstab
+
+#Fix grub with BTRFS to use /@/.snapshots/1/snapshot/boot instead of /@/boot
+# shellcheck disable=SC2016
+sed -i 's/rootflags=subvol=${rootsubvol}//g' ${dst}/etc/grub.d/10_linux
+# shellcheck disable=SC2016
+sed -i 's/rootflags=subvol=${rootsubvol}//g' ${dst}/etc/grub.d/20_linux_xen
+
+sed -i 's/^MODULES=(.*)/MODULES=(btrfs)/g' ${dst}/etc/mkinitcpio.conf
+sed -i 's/^HOOKS=(\(.*\))/HOOKS=(\1 grub-btrfs-overlayfs)/g' ${dst}/etc/mkinitcpio.conf
+
+#regen mkinitcpio in rootfs
+arch-chroot ${dst} mkinitcpio -P
+
+#Initialize Snapper. Unmount our predefined .snapshot folder, let snapper recreate it (it fails otherwise)
+#remove the snapshot created by snapper, remount our .snapshot
+info "--> Initializing Snapper"
+umount ${dst}/.snapshots
+rm -r ${dst}/.snapshots
+arch-chroot ${dst} snapper --no-dbus -c root create-config /
+btrfs subvolume list ${dst}
+btrfs subvolume delete ${dst}/.snapshots
+mkdir -p ${dst}/.snapshots
+mount -o noatime,compress=zstd,subvol=@/.snapshots ${destination_rootfs} ${dst}/.snapshots
+chmod 750 ${dst}/.snapshots
+
+info "--> Install Bootloader"
+
+if [ $LABEL == "live-efi" ]; then
+
+    arch-chroot ${dst} grub-install --target=x86_64-efi \
+                                    --efi-directory=/efi \
+                                    --bootloader-id=Calaos-OS \
+                                    --modules="normal test efi_gop efi_uga search echo linux all_video gfxmenu gfxterm_background gfxterm_menu gfxterm loadenv configfile gzio part_gpt btrfs"
+else
+    arch-chroot ${dst} grub-install --target=i386-pc ${destination_rootfs}
+fi
+
+#keep default 5s boot menu timeout for now. To allow user to choose a snapshot if any
+#sed -i 's/GRUB_TIMEOUT=[0-9]/GRUB_TIMEOUT=1/g' ${dst}/etc/default/grub
+sed -i 's/^GRUB_DISTRIBUTOR=.*$/GRUB_DISTRIBUTOR="Calaos OS"/g' ${dst}/etc/default/grub
+sed -i 's/^.*GRUB_COLOR_NORMAL=.*$/GRUB_COLOR_NORMAL="light-blue/black"/g' ${dst}/etc/default/grub
+sed -i 's/^.*GRUB_COLOR_HIGHLIGHT=.*$/GRUB_COLOR_HIGHLIGHT="white/blue"/g' ${dst}/etc/default/grub
+
+arch-chroot ${dst} grub-mkconfig -o /boot/grub/grub.cfg
+
+info "--> Enable services"
+
+arch-chroot ${dst} systemctl enable \
+        fstrim.timer \
+        btrfs-scrub@$(systemd-escape --template btrfs-scrub@.timer --path /dev/disk/by-uuid/$uuid_rootfs).timer \
+        snapper-timeline.timer \
+        snapper-cleanup.timer \
+        grub-btrfs.path
+
+arch-chroot ${dst} snapper --no-dbus -c root set-config "NUMBER_LIMIT=10"
+arch-chroot ${dst} snapper --no-dbus -c root set-config "NUMBER_MIN_AGE=5400"
+arch-chroot ${dst} snapper --no-dbus -c root set-config "TIMELINE_LIMIT_DAILY=14"
+arch-chroot ${dst} snapper --no-dbus -c root set-config "TIMELINE_LIMIT_WEEKLY=4"
+arch-chroot ${dst} snapper --no-dbus -c root set-config "TIMELINE_LIMIT_MONTHLY=6"
+arch-chroot ${dst} snapper --no-dbus -c root set-config "TIMELINE_LIMIT_YEARLY=2"
+
+info "--> Unmouting all partitions"
+
+umount ${dst}/.snapshots
+umount ${dst}/boot/grub
+umount ${dst}/opt
+umount ${dst}/root
+umount ${dst}/srv
+umount ${dst}/tmp
+umount ${dst}/usr/local
+umount ${dst}/var/cache
+umount ${dst}/var/log
+umount ${dst}/var/spool
+umount ${dst}/var/tmp
+umount ${dst}/efi
+umount ${dst}
+umount ${src}
 
 green "--> Installation successful, you can now reboot"
