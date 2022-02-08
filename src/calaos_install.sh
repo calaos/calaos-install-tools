@@ -254,7 +254,7 @@ if [ $LABEL == "live-efi" ]; then
                                     --bootloader-id=Calaos-OS \
                                     --modules="normal test efi_gop efi_uga search echo linux all_video gfxmenu gfxterm_background gfxterm_menu gfxterm loadenv configfile gzio part_gpt btrfs"
 else
-    arch-chroot ${dst} grub-install --target=i386-pc ${destination_rootfs}
+    arch-chroot ${dst} grub-install --target=i386-pc ${destination}
 fi
 
 #keep default 5s boot menu timeout for now. To allow user to choose a snapshot if any
@@ -294,7 +294,9 @@ umount ${dst}/var/cache
 umount ${dst}/var/log
 umount ${dst}/var/spool
 umount ${dst}/var/tmp
-umount ${dst}/efi
+if [ $LABEL == "live-efi" ]; then
+    umount ${dst}/efi
+fi
 umount ${dst}
 umount ${src}
 
