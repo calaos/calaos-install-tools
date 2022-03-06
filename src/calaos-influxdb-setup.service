@@ -1,0 +1,12 @@
+[Unit]
+Description=Setup influxdb and add informations to calaos installation.
+ConditionPathExists=!/var/lib/influxdb
+Before=calaos-server.service
+
+[Service]
+ExecStart=/usr/sbin/calaos_influxdb_setup.sh
+Type=simple
+User=root
+
+[Install]
+WantedBy=multi-user.target
