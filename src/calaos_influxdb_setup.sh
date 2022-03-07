@@ -70,7 +70,7 @@ INFLUXDB_TOKEN="$(openssl rand -base64 64)"
 INFLUXDB_USER="admin"
 INFLUXDB_PASS="$(openssl rand --base64 15)"
 INFLUXDB_ORG="calaos"
-INFLUXDB_BUCKET="calaos-bucket"
+INFLUXDB_BUCKET="calaos-data"
 INFLUXDB_CLI_CONFIG_NAME="calaos-config"
 
 info "--> Setup new configuration of influxdb"
@@ -88,6 +88,7 @@ influx setup \
 calaos_config set influxdb_token "${INFLUXDB_TOKEN}"
 calaos_config set influxdb_org "${INFLUXDB_ORG}"
 calaos_config set influxdb_bucket "${INFLUXDB_BUCKET}"
+calaos_config set influxdb_version "2"
 
 info "--> Save infos into /root/influxdb_access.log"
 
