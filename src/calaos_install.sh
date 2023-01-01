@@ -272,7 +272,7 @@ arch-chroot ${dst} systemctl enable \
         btrfs-scrub@$(systemd-escape --template btrfs-scrub@.timer --path /dev/disk/by-uuid/$uuid_rootfs).timer \
         snapper-timeline.timer \
         snapper-cleanup.timer \
-        grub-btrfs.path
+        grub-btrfsd.service
 
 arch-chroot ${dst} snapper --no-dbus -c root set-config "NUMBER_LIMIT=10"
 arch-chroot ${dst} snapper --no-dbus -c root set-config "NUMBER_MIN_AGE=5400"
