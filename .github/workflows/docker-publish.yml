@@ -44,11 +44,10 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           # relative path to the place where source code with Dockerfile is located
-          context: calaos_base
           # Note: tags has to be all lower-case
           tags: |
-            ghcr.io/calaos/calaos_docker/calaos_base:latest 
-            ghcr.io/calaos/calaos_docker/calaos_base:${{ github.sha }}
+            ghcr.io/calaos/calaos-install-tools:latest 
+            ghcr.io/calaos/calaos-install-tools:${{ github.sha }}
           push: ${{ github.ref == 'refs/heads/master' }}
           platforms: linux/amd64,linux/arm64
 
